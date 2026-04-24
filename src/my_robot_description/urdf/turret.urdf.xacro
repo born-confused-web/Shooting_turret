@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<robot name="turret">
+	<link name="base_link">
+		<visual>
+			<geometry>
+				<mesh filename="package://my_robot_description/meshes/bottombase.stl"/>
+			</geometry>
+		</visual>
+	</link>
+
+	<link name="base_top">
+		<visual>
+			<geometry>
+				<mesh filename="package://my_robot_description/meshes/basetop.stl"/>
+			</geometry>
+		</visual>
+	</link>
+
+	<link name="rotating_support">
+		<visual>
+			<geometry>
+				<mesh filename="package://my_robot_description/meshes/rotatingbase.stl"/>
+			</geometry>
+		</visual>
+	</link>
+
+	<link name="barrel">
+                <visual>
+                        <geometry>
+                                <mesh filename="package://my_robot_description/meshes/barrel.stl"/>
+                        </geometry>
+                </visual>
+        </link>
+
+</robot>

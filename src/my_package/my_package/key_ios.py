@@ -1,43 +1,47 @@
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Float64MultiArray
 from pynput import keyboard
 
 class KeyboardPub(Node):
     def __init__(self):
         super().__init__("key_node")
-        self.publisher_ = self.create_publisher(String, "key_line", 10)
-        self.current_key = "stop"  # Initialize the variable
+        self.publisher_ = self.create_publisher(Float64MultiArray, "commands", 10)
         self.timer = self.create_timer(1.0, self.key_inputs)
         self.listner = keyboard.Listener(on_press=self.is_pressed, on_release=self.is_released)
         self.listner.start()
+        self.vertical_angle = 0
+        self.horizontal_angle = 0
     
     def is_pressed(self, key):
         try:
             if key.char=="w":
-                self.current_key = "forward"
+                if self.vertical_angle<1.5708:
+                    self.vertical_angle+=0.1745
             
             elif key.char=="s":
-                self.current_key = "backward"
+                if self.vertical_angle>-1.5708:
+                    self.vertical_angle-=0.1745
             
             elif key.char=="a":
-                self.current_key = "left"
+                if self.horizontal_angle<1.5708:
+                    self.horizontal_angle+=0.1745
             
             elif key.char=="d":
-                self.current_key = "right"
+                if self.horizontal_angle>-1.5708:
+                    self.horizontal_angle-=0.1745
         
         except AttributeError:
             pass
     
     def is_released(self, key):
-        self.current_key = "stop"
         if key == keyboard.Key.esc:
             return False
         
     def key_inputs(self):
-        key_message = String()
-        key_message.data = str(self.current_key)
-        self.publisher_.publish(key_message)
+        joint_angles = Float64MultiArray()
+        joint_angles.data = [self.horizontal_angle, self.vertical_angle]
+        self.publisher_.publish(joint_angles)
 
 def main(args=None):
     rclpy.init(args=args)

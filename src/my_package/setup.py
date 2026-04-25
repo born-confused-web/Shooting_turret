@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'pub1 = my_package.pub1:main',
             'sub1 = my_package.sub1:main',
+            'key_ios = my_package.key_ios:main',
         ],
     },
 )

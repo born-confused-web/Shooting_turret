@@ -6,7 +6,7 @@ from pynput import keyboard
 class KeyboardPub(Node):
     def __init__(self):
         super().__init__("key_node")
-        self.publisher_ = self.create_publisher(Float64MultiArray, "commands", 10)
+        self.publisher_ = self.create_publisher(Float64MultiArray, "/position_controller/commands", 10)
         self.timer = self.create_timer(1.0, self.key_inputs)
         self.listner = keyboard.Listener(on_press=self.is_pressed, on_release=self.is_released)
         self.listner.start()

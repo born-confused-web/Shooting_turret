@@ -1,21 +1,25 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, ExecuteProcess
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command
+from launch_ros.descriptions import ParameterValue
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, get_package_share_path
+from launch.actions import SetEnvironmentVariable
+from launch.actions import RegisterEventHandler
+from launch.event_handlers import OnProcessExit
 import os
-from launch_ros.substitutions import FindPackageShare
-import xacro
 
 def generate_launch_description():
 
-    pkg_my_robot = get_package_share_directory('my_robot_description')
+    urdf_file = get_package_share_path("my_robot_description")/'urdf'/'turret.urdf.xacro'
 
-    urdf_file = os.path.join(pkg_my_robot, 'urdf', 'turret.urdf.xacro')
+    controller_yaml = get_package_share_path("my_robot_description")/'config'/'controller.yaml'
 
-    robot_description = xacro.process_file(urdf_file).toxml()
-
-    controller_yaml = os.path.join(pkg_my_robot, 'config', 'controllers.yaml')
+    set_gazebo_model_path = SetEnvironmentVariable(
+        name='GZ_SIM_RESOURCE_PATH',
+        value=os.path.dirname(get_package_share_directory('my_robot_description'))
+    )
 
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -24,14 +28,29 @@ def generate_launch_description():
         launch_arguments=[('gz_args', '-r empty.sdf')]
     )
 
+
     control_node = Node(
         package='controller_manager',
         executable='ros2_control_node',
+        name='controller_manager',
         parameters=[
-            {'robot_description': robot_description},
             controller_yaml
         ],
         output='screen'
+    )
+
+    load_joint_state = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_state_broadcaster"],
+        output="screen",
+    )
+
+    load_position_controller = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["position_controller"],
+        output="screen",
     )
 
     bridge = Node(
@@ -49,7 +68,9 @@ def generate_launch_description():
         name='robot_state_publisher',
         output='screen',
         parameters=[{
-            'robot_description': robot_description
+            'robot_description': ParameterValue(
+                Command(['xacro ', str(urdf_file)]), value_type=str
+            )
         }]
     )
 
@@ -66,12 +87,6 @@ def generate_launch_description():
         output='screen'
     )
 
-    joint_node = Node(
-        package='my_package',
-        executable='key_ios',
-        output='screen'
-    )
-
     joint_display_node = Node(
         package='my_package',
         executable='jointangledisplay',
@@ -80,11 +95,30 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        robot_state_publisher,
+        set_gazebo_model_path,
         gz_sim,
-        joint_node,
-        control_node,
-        spawn_robot,
         bridge,
+        spawn_robot,
+        robot_state_publisher,
+        control_node,
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=control_node,
+                on_exit=[spawn_robot],
+            )
+        ),
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=spawn_robot,
+                on_exit=[load_joint_state],
+            )
+        ),
+
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=load_joint_state,
+                on_exit=[load_position_controller],
+            )
+        ),
         joint_display_node
     ])

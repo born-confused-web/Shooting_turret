@@ -137,9 +137,10 @@
 	</gazebo>
 
 	<gazebo>
-  		<plugin filename="libgz_ros2_control-system.so"
-        	name="gz_ros2_control::GazeboSimROS2ControlPlugin">
-		</plugin>
+  		<plugin filename="gz_ros2_control-system" 
+          	name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+    		<parameters>$(find my_robot_description)/config/controller.yaml</parameters>
+  		</plugin>
 	</gazebo>
 
 </robot>

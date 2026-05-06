@@ -28,6 +28,9 @@ setup(
             'sub1 = my_package.sub1:main',
             'key_ios = my_package.key_ios:main',
             'jointangledisplay = my_package.jointangledisplay:main',
+            'espcom = my_package.espcom:main',
+            'espmimic = my_package.espmimic:main',
+            'camerasub = my_package.camerasub:main',
         ],
     },
 )

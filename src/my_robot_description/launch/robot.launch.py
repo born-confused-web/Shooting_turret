@@ -1,13 +1,14 @@
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.descriptions import ParameterValue
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory, get_package_share_path
 from launch.actions import SetEnvironmentVariable
 from launch.actions import RegisterEventHandler
 from launch.event_handlers import OnProcessExit
+from launch.conditions import IfCondition
 import os
 
 def generate_launch_description():
@@ -21,11 +22,18 @@ def generate_launch_description():
         value=os.path.dirname(get_package_share_directory('my_robot_description'))
     )
 
+    gazebo_headless = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
+        ),
+        launch_arguments=[('gz_args', ["--headless-rendering -s -r -v 3 empty.sdf"])]
+    )
+
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments=[('gz_args', '-r empty.sdf')]
+        launch_arguments=[('gz_args', '-r -v 3 empty.sdf')]
     )
 
 
@@ -33,23 +41,21 @@ def generate_launch_description():
         package='controller_manager',
         executable='ros2_control_node',
         name='controller_manager',
-        parameters=[
-            controller_yaml
-        ],
+        parameters=[controller_yaml],
         output='screen'
     )
 
     load_joint_state = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_state_broadcaster"],
+        arguments=["joint_state_broadcaster", "--param-file" ,"-p", controller_yaml],
         output="screen",
     )
 
     load_position_controller = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["position_controller"],
+        arguments=["position_controller", "--param-file","-p", controller_yaml],
         output="screen",
     )
 
@@ -96,29 +102,13 @@ def generate_launch_description():
 
     return LaunchDescription([
         set_gazebo_model_path,
+        gazebo_headless,
         gz_sim,
         bridge,
         spawn_robot,
         robot_state_publisher,
         control_node,
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=control_node,
-                on_exit=[spawn_robot],
-            )
-        ),
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=spawn_robot,
-                on_exit=[load_joint_state],
-            )
-        ),
-
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=load_joint_state,
-                on_exit=[load_position_controller],
-            )
-        ),
+        load_joint_state,
+        load_position_controller,
         joint_display_node
     ])

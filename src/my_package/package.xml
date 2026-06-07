@@ -13,8 +13,7 @@
   <test_depend>python3-pytest</test_depend>
   <exec_depend>python3-pynput</exec_depend>
   <exec_depend>my_robot_description</exec_depend>
-  <exec_depend>python3-cv2</exec_depend>
-  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

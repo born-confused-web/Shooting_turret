@@ -1,5 +1,6 @@
 #include <WiFi.h>
-#include <WiFiUdp.h>
+#include <WiFiClient.h>
+#include <WiFiServer.h>
 #include "OV7670.h"
 #include "MiniJPEG.h"
 
@@ -18,45 +19,133 @@ const int D5    = 13;
 const int D6    = 12;
 const int D7    = 4;
 
-#define SSID      "Galaxy A16 5G 8399"
-#define PASSWORD  "lkjhgfdsa"
-#define PC_IP     "10.25.118.174"   // <-- replace with your PC IP
-#define UDP_PORT  5005
-#define FRAME_W   160
-#define FRAME_H   120
-#define JPEG_QUALITY 50           // 1-100, higher = better quality, larger file
-#define CHUNK     4096            // max UDP payload bytes
+#define SSID          "Galaxy A16 5G 8399"
+#define PASSWORD      "lkjhgfdsa"
+#define JPEG_QUALITY  50
+#define FRAME_W       160
+#define FRAME_H       120
 
 OV7670 *camera;
-WiFiUDP udp;
 
-// JPEG output buffer — 15KB is plenty for 160x120 at quality 50
-static uint8_t jpegBuf[60000] __attribute__((aligned(4)));
+// Two servers:
+// Port 80  — browser MJPEG viewer
+// Port 8080 — raw TCP stream for Python
+WiFiServer httpServer(80);
+WiFiServer tcpServer(8080);
 
-uint8_t frameNum = 0;
+static uint8_t jpegBuf[70000] __attribute__((aligned(4)));
 
-void sendJPEG(int jpegLen) {
-  int offset = 0;
-  while (offset < jpegLen) {
-    int chunkSize = min(CHUNK, jpegLen - offset);
+static uint32_t lastPrint  = 0;
+static int      frameCount = 0;
+static int      lastJpegLen = 0;
 
-    // 6-byte header: [frameNum, offset(3 bytes), totalLen(2 bytes)]
-    uint8_t header[6];
-    header[0] = frameNum;
-    header[1] = (offset >> 16) & 0xFF;
-    header[2] = (offset >>  8) & 0xFF;
-    header[3] = (offset      ) & 0xFF;
-    header[4] = (jpegLen >> 8) & 0xFF;
-    header[5] = (jpegLen     ) & 0xFF;
+// ---- Encode one frame, return length or -1 on overflow ----
+int encodeFrame() {
+  int len = MiniJPEG::encode(camera->frame, jpegBuf,
+                              FRAME_W, FRAME_H, JPEG_QUALITY,
+                              sizeof(jpegBuf));
+  return len;
+}
 
-    udp.beginPacket(PC_IP, UDP_PORT);
-    udp.write(header, 6);
-    udp.write(jpegBuf + offset, chunkSize);
-    udp.endPacket();
-
-    offset += chunkSize;
+// ---- Handle browser MJPEG stream ----
+void handleHTTP(WiFiClient &client) {
+  // Read and drain HTTP request
+  String req = "";
+  unsigned long t = millis();
+  while (client.connected() && millis() - t < 2000) {
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      line.trim();
+      if (req == "") req = line;
+      if (line.length() == 0) break;
+    }
   }
-  frameNum++;
+  Serial.println("HTTP: " + req);
+
+  if (req.indexOf("/stream") >= 0) {
+    // MJPEG stream
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
+    client.println("Connection: keep-alive");
+    client.println("Access-Control-Allow-Origin: *");
+    client.println();
+
+    while (client.connected()) {
+      camera->oneFrame();
+      int len = encodeFrame();
+      if (len <= 0) continue;
+
+      client.print("--frame\r\n");
+      client.print("Content-Type: image/jpeg\r\n");
+      client.printf("Content-Length: %d\r\n\r\n", len);
+      client.write(jpegBuf, len);
+      client.print("\r\n");
+
+      frameCount++;
+      uint32_t now = millis();
+      if (now - lastPrint >= 1000) {
+        Serial.printf("HTTP FPS: %d | JPEG: %d bytes | Heap: %d\n",
+                      frameCount, len, ESP.getFreeHeap());
+        frameCount = 0;
+        lastPrint  = now;
+      }
+    }
+    Serial.println("HTTP client disconnected");
+
+  } else {
+    // Root page — serves the viewer
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/html");
+    client.println("Connection: close");
+    client.println();
+    client.print(
+      "<!DOCTYPE html><html><head><title>OV7670</title>"
+      "<style>"
+      "body{margin:0;background:#111;display:flex;flex-direction:column;"
+      "align-items:center;justify-content:center;height:100vh;color:#fff;"
+      "font-family:sans-serif}"
+      "img{image-rendering:pixelated;width:640px;height:480px;"
+      "border:2px solid #333}"
+      "p{margin:8px;font-size:14px;color:#aaa}"
+      "</style></head><body>"
+      "<p>OV7670 Live Feed</p>"
+      "<img src='/stream'/>"
+      "<p>160x120 &rarr; 640x480 &nbsp;|&nbsp; JPEG Quality 50</p>"
+      "</body></html>"
+    );
+    client.stop();
+  }
+}
+
+// ---- Handle raw TCP Python client ----
+// Protocol: [4-byte big-endian length][JPEG bytes] repeated
+void handleTCP(WiFiClient &client) {
+  Serial.println("Python client connected");
+
+  while (client.connected()) {
+    camera->oneFrame();
+    int len = encodeFrame();
+    if (len <= 0) continue;
+
+    // Send 4-byte length header (big-endian)
+    uint8_t hdr[4];
+    hdr[0] = (len >> 24) & 0xFF;
+    hdr[1] = (len >> 16) & 0xFF;
+    hdr[2] = (len >>  8) & 0xFF;
+    hdr[3] = (len      ) & 0xFF;
+    client.write(hdr, 4);
+    client.write(jpegBuf, len);
+
+    frameCount++;
+    uint32_t now = millis();
+    if (now - lastPrint >= 1000) {
+      Serial.printf("TCP FPS: %d | JPEG: %d bytes | Heap: %d\n",
+                    frameCount, len, ESP.getFreeHeap());
+      frameCount = 0;
+      lastPrint  = now;
+    }
+  }
+  Serial.println("Python client disconnected");
 }
 
 void setup() {
@@ -79,34 +168,26 @@ void setup() {
     delay(100);
   }
 
-  udp.begin(UDP_PORT);
-  Serial.printf("Streaming JPEG to %s:%d\n", PC_IP, UDP_PORT);
+  httpServer.begin();
+  tcpServer.begin();
+
+  Serial.println("HTTP stream: http://" + WiFi.localIP().toString() + "/stream");
+  Serial.println("Browser:     http://" + WiFi.localIP().toString());
+  Serial.println("Python TCP:  port 8080");
 }
 
-static uint32_t lastPrint = 0;
-static int frameCount = 0;
-
 void loop() {
-  camera->oneFrame();
-
-  int jpegLen = MiniJPEG::encode(camera->frame, jpegBuf,
-                                  FRAME_W, FRAME_H, JPEG_QUALITY,
-                                  sizeof(jpegBuf));
-  if (jpegLen <= 0) {
-    Serial.println("JPEG encode overflow - skipping frame");
-    return;  // skip this frame
+  // Check for browser connection (port 80)
+  WiFiClient httpClient = httpServer.available();
+  if (httpClient) {
+    handleHTTP(httpClient);
+    httpClient.stop();
   }
 
-  if (jpegLen > 0) {
-    sendJPEG(jpegLen);
-    frameCount++;
-  }
-
-  uint32_t now = millis();
-  if (now - lastPrint >= 1000) {
-    Serial.printf("FPS: %d | JPEG: %d bytes | Heap: %d\n",
-                  frameCount, jpegLen, ESP.getFreeHeap());
-    frameCount = 0;
-    lastPrint  = now;
+  // Check for Python connection (port 8080)
+  WiFiClient tcpClient = tcpServer.available();
+  if (tcpClient) {
+    handleTCP(tcpClient);
+    tcpClient.stop();
   }
 }

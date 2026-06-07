@@ -19,8 +19,8 @@ public:
   // quality: 1-100 (50 is a good default)
   // returns: number of bytes written to jpegOut
   static int encode(const uint8_t *rgb565, uint8_t *jpegOut,
-                    int width, int height, int quality) {
-    BitWriter bw(jpegOut);
+                    int width, int height, int quality, int outBufSize) {
+    BitWriter bw(jpegOut, outBufSize);
     int q = clampQ(quality);
 
     // Build quantization tables
@@ -59,6 +59,7 @@ public:
 
     bw.flush();
     writeEOI(bw);
+    if (bw.overflow) return -1;
     return bw.pos();
   }
 
@@ -67,12 +68,18 @@ private:
   struct BitWriter {
     uint8_t *buf;
     int      _pos;
+    int      _maxPos;
     uint32_t acc;
     int      bits;
+    bool     overflow;
 
-    BitWriter(uint8_t *b) : buf(b), _pos(0), acc(0), bits(0) {}
+    BitWriter(uint8_t *b, int maxSize)
+      : buf(b), _pos(0), _maxPos(maxSize), acc(0), bits(0), overflow(false) {}
 
-    void writeByte(uint8_t c) { buf[_pos++] = c; }
+    void writeByte(uint8_t c) {
+      if (_pos >= _maxPos) { overflow = true; return; }
+      buf[_pos++] = c;
+    }
 
     void writeWord(uint16_t w) {
       writeByte(w >> 8);

@@ -24,14 +24,14 @@ const int D7    = 4;
 #define UDP_PORT  5005
 #define FRAME_W   160
 #define FRAME_H   120
-#define JPEG_QUALITY 70           // 1-100, higher = better quality, larger file
+#define JPEG_QUALITY 50           // 1-100, higher = better quality, larger file
 #define CHUNK     4096            // max UDP payload bytes
 
 OV7670 *camera;
 WiFiUDP udp;
 
 // JPEG output buffer — 15KB is plenty for 160x120 at quality 50
-static uint8_t jpegBuf[15000] __attribute__((aligned(4)));
+static uint8_t jpegBuf[60000] __attribute__((aligned(4)));
 
 uint8_t frameNum = 0;
 
@@ -90,7 +90,13 @@ void loop() {
   camera->oneFrame();
 
   int jpegLen = MiniJPEG::encode(camera->frame, jpegBuf,
-                                  FRAME_W, FRAME_H, JPEG_QUALITY);
+                                  FRAME_W, FRAME_H, JPEG_QUALITY,
+                                  sizeof(jpegBuf));
+  if (jpegLen <= 0) {
+    Serial.println("JPEG encode overflow - skipping frame");
+    return;  // skip this frame
+  }
+
   if (jpegLen > 0) {
     sendJPEG(jpegLen);
     frameCount++;
